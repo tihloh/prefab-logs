@@ -143,6 +143,7 @@ final class LogEntry
             'auth' => 'AUTH',
             'permission', 'security' => 'SECURITY',
             'system' => 'SYSTEM',
+            'error' => 'ERROR',
             'integration', 'api', 'webhook', 'sms', 'mail' => 'INTEGRATION',
             'import', 'export', 'backup', 'restore', 'data' => 'DATA',
             default => 'AUDIT',
@@ -163,10 +164,16 @@ final class LogEntry
             default => 1,
         };
 
+        $module = match ($prefix) {
+            'user' => 'users',
+            'permission' => 'permissions',
+            default => $prefix !== '' ? $prefix : null,
+        };
+
         return [
             'classification' => $classification,
             'level' => $level,
-            'module' => $prefix !== '' ? $prefix : null,
+            'module' => $module,
             'status' => $status,
         ];
     }
