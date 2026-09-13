@@ -47,7 +47,6 @@ final class LogPayloadCodec
             if ($decoded === false) { return []; }
             $body = $decoded;
         } elseif ($mode !== 0) {
-            // Backward/foreign payload: treat the whole value as plain JSON.
             $body = $payload;
         }
 
@@ -62,7 +61,16 @@ final class LogPayloadCodec
 
     public static function sanitize(mixed $value, ?string $key = null): mixed
     {
-        if ($key !== null && self::isSensitive($key)) { return self::REDACTED; }
+        if ($key !== null && self::isSensitive($key)) {
+            if (is_array($value) && (array_key_exists('old', $value) || array_key_exists('new', $value))) {
+                return [
+                    'old' => self::REDACTED,
+                    'new' => self::REDACTED,
+                ];
+            }
+            return self::REDACTED;
+        }
+
         if (!is_array($value)) { return $value; }
 
         $sanitized = [];
