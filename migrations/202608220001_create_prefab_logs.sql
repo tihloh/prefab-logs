@@ -4,6 +4,9 @@ CREATE TABLE IF NOT EXISTS prefab_logs (
     level TINYINT UNSIGNED NOT NULL DEFAULT 20,
     module VARCHAR(64) NULL,
     action VARCHAR(191) NOT NULL,
+    scope_type VARCHAR(24) NOT NULL DEFAULT 'APP',
+    scope_path VARCHAR(255) NULL,
+    visibility VARCHAR(24) NOT NULL DEFAULT 'ADMIN',
     subject_type VARCHAR(64) NOT NULL,
     subject_id VARCHAR(191) NULL,
     actor_id VARCHAR(191) NULL,
@@ -19,6 +22,7 @@ CREATE TABLE IF NOT EXISTS prefab_logs (
     INDEX idx_prefab_logs_class_level (classification, level),
     INDEX idx_prefab_logs_module (module),
     INDEX idx_prefab_logs_action (action),
+    INDEX idx_prefab_logs_scope (scope_type, scope_path, visibility),
     INDEX idx_prefab_logs_subject (subject_type, subject_id),
     INDEX idx_prefab_logs_actor (actor_id),
     INDEX idx_prefab_logs_created (created_at)
