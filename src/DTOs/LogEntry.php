@@ -62,8 +62,11 @@ final class LogEntry
 
     public static function fromArray(array $data): self
     {
+        $action = (string) ($data['action'] ?? '');
+        $defaults = self::defaultsForAction($action);
+
         return new self(
-            action: (string) ($data['action'] ?? ''),
+            action: $action,
             subjectType: (string) ($data['subject_type'] ?? $data['subjectType'] ?? $data['target_type'] ?? ''),
             subjectId: $data['subject_id'] ?? $data['subjectId'] ?? $data['target_id'] ?? null,
             message: $data['message'] ?? null,
@@ -73,10 +76,10 @@ final class LogEntry
             ipAddress: $data['ip_address'] ?? $data['ipAddress'] ?? null,
             userAgent: $data['user_agent'] ?? $data['userAgent'] ?? null,
             occurredAt: $data['occurred_at'] ?? $data['occurredAt'] ?? null,
-            classification: (string) ($data['classification'] ?? $data['class'] ?? 'AUDIT'),
-            level: self::levelValue($data['level'] ?? self::INFO),
-            module: isset($data['module']) ? (string) $data['module'] : null,
-            status: self::statusValue($data['status'] ?? 1),
+            classification: (string) ($data['classification'] ?? $data['class'] ?? $defaults['classification']),
+            level: self::levelValue($data['level'] ?? $defaults['level']),
+            module: isset($data['module']) ? (string) $data['module'] : $defaults['module'],
+            status: self::statusValue($data['status'] ?? $defaults['status']),
             details: is_array($data['details'] ?? null) ? $data['details'] : [],
         );
     }
@@ -85,7 +88,6 @@ final class LogEntry
     {
         $changes = [];
         $fields = array_unique([...array_keys($before), ...array_keys($now)]);
-
         foreach ($fields as $field) {
             if (in_array($field, $ignore, true)) { continue; }
             $old = $before[$field] ?? null;
@@ -93,7 +95,6 @@ final class LogEntry
             if (self::same($old, $new)) { continue; }
             $changes[$field] = ['old' => $old, 'new' => $new];
         }
-
         return $changes;
     }
 
@@ -133,6 +134,41 @@ final class LogEntry
             self::CRITICAL => 'CRITICAL',
             default => 'INFO',
         };
+    }
+
+    private static function defaultsForAction(string $action): array
+    {
+        $prefix = strtolower((string) strtok($action, '.'));
+        $classification = match ($prefix) {
+            'auth' => 'AUTH',
+            'permission', 'security' => 'SECURITY',
+            'system' => 'SYSTEM',
+            'integration', 'api', 'webhook', 'sms', 'mail' => 'INTEGRATION',
+            'import', 'export', 'backup', 'restore', 'data' => 'DATA',
+            default => 'AUDIT',
+        };
+
+        $level = match (true) {
+            str_contains($action, 'critical'), str_contains($action, 'fatal') => self::CRITICAL,
+            str_contains($action, 'error'), str_contains($action, 'exception') => self::ERROR,
+            str_contains($action, 'failed'), str_contains($action, 'warning') => self::WARNING,
+            str_contains($action, 'deleted'), str_contains($action, 'permission.') => self::NOTICE,
+            default => self::INFO,
+        };
+
+        $status = match (true) {
+            str_contains($action, 'login_failed'),
+            str_contains($action, '.failed'),
+            str_ends_with($action, '.error') => 0,
+            default => 1,
+        };
+
+        return [
+            'classification' => $classification,
+            'level' => $level,
+            'module' => $prefix !== '' ? $prefix : null,
+            'status' => $status,
+        ];
     }
 
     private static function normalizeLevel(int $level): int
