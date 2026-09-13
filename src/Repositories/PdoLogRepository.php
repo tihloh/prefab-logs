@@ -27,22 +27,23 @@ final class PdoLogRepository implements LogRepositoryInterface
     public function record(LogEntry $entry): int|string
     {
         $sql = "INSERT INTO {$this->table}
-            (classification, level, module, action, subject_type, subject_id, actor_id, status, message, changes, metadata, details, ip_address, user_agent, occurred_at, created_at)
+            (classification, level, module, action, scope_type, scope_path, visibility, subject_type, subject_id, actor_id, status, message, changes, metadata, details, ip_address, user_agent, occurred_at, created_at)
             VALUES
-            (:classification, :level, :module, :action, :subject_type, :subject_id, :actor_id, :status, :message, :changes, :metadata, :details, :ip_address, :user_agent, :occurred_at, CURRENT_TIMESTAMP)";
+            (:classification, :level, :module, :action, :scope_type, :scope_path, :visibility, :subject_type, :subject_id, :actor_id, :status, :message, :changes, :metadata, :details, :ip_address, :user_agent, :occurred_at, CURRENT_TIMESTAMP)";
 
         $this->database->statement($sql, [
             'classification' => $entry->classification,
             'level' => $entry->level,
             'module' => $entry->module,
             'action' => $entry->action,
+            'scope_type' => $entry->scopeType,
+            'scope_path' => $entry->scopePath,
+            'visibility' => $entry->visibility,
             'subject_type' => $entry->subjectType,
             'subject_id' => $entry->subjectId !== null ? (string) $entry->subjectId : null,
             'actor_id' => $entry->actorId !== null ? (string) $entry->actorId : null,
             'status' => $entry->status,
             'message' => $entry->message,
-            // New entries keep verbose structured data in the compressed details payload.
-            // These columns remain for backward compatibility with older installations.
             'changes' => '{}',
             'metadata' => '{}',
             'details' => LogPayloadCodec::encode($entry->details),
@@ -86,6 +87,43 @@ final class PdoLogRepository implements LogRepositoryInterface
         return array_map(fn (array $row) => $this->decode($row), $rows);
     }
 
+    public function forScope(
+        string $scopeType,
+        ?string $scopePath = null,
+        bool $includeDescendants = false,
+        ?string $visibility = null,
+        int $limit = 100,
+        int $offset = 0,
+    ): array {
+        $where = ['scope_type = :scope_type'];
+        $params = ['scope_type' => strtoupper($scopeType)];
+        if ($scopePath !== null) {
+            if ($includeDescendants) {
+                $where[] = '(scope_path = :scope_path OR scope_path LIKE :scope_descendants)';
+                $params['scope_path'] = $scopePath;
+                $params['scope_descendants'] = $scopePath . '.%';
+            } else {
+                $where[] = 'scope_path = :scope_path';
+                $params['scope_path'] = $scopePath;
+            }
+        }
+        if ($visibility !== null) {
+            $where[] = 'visibility = :visibility';
+            $params['visibility'] = strtoupper($visibility);
+        }
+        $rows = $this->database->select($this->pagedSql(implode(' AND ', $where), $limit, $offset), $params);
+        return array_map(fn (array $row) => $this->decode($row), $rows);
+    }
+
+    public function publicLogs(int $limit = 100, int $offset = 0): array
+    {
+        $rows = $this->database->select(
+            $this->pagedSql('scope_type = :scope_type AND visibility = :visibility', $limit, $offset),
+            ['scope_type' => LogEntry::SCOPE_APP, 'visibility' => LogEntry::VISIBILITY_PUBLIC],
+        );
+        return array_map(fn (array $row) => $this->decode($row), $rows);
+    }
+
     private function pagedSql(?string $where, int $limit, int $offset = 0): string
     {
         $limit = max(1, min($limit, 1000));
@@ -103,7 +141,8 @@ final class PdoLogRepository implements LogRepositoryInterface
             'sqlite' => "CREATE TABLE IF NOT EXISTS {$this->table} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 classification TEXT NOT NULL DEFAULT 'AUDIT', level INTEGER NOT NULL DEFAULT 20, module TEXT NULL,
-                action TEXT NOT NULL, subject_type TEXT NOT NULL, subject_id TEXT NULL, actor_id TEXT NULL,
+                action TEXT NOT NULL, scope_type TEXT NOT NULL DEFAULT 'APP', scope_path TEXT NULL, visibility TEXT NOT NULL DEFAULT 'ADMIN',
+                subject_type TEXT NOT NULL, subject_id TEXT NULL, actor_id TEXT NULL,
                 status INTEGER NULL DEFAULT 1, message TEXT NULL, changes TEXT NOT NULL DEFAULT '{}', metadata TEXT NOT NULL DEFAULT '{}',
                 details BLOB NULL, ip_address TEXT NULL, user_agent TEXT NULL, occurred_at TEXT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -111,7 +150,8 @@ final class PdoLogRepository implements LogRepositoryInterface
             'pgsql' => "CREATE TABLE IF NOT EXISTS {$this->table} (
                 id BIGSERIAL PRIMARY KEY,
                 classification VARCHAR(32) NOT NULL DEFAULT 'AUDIT', level SMALLINT NOT NULL DEFAULT 20, module VARCHAR(64) NULL,
-                action VARCHAR(191) NOT NULL, subject_type VARCHAR(64) NOT NULL, subject_id VARCHAR(191) NULL, actor_id VARCHAR(191) NULL,
+                action VARCHAR(191) NOT NULL, scope_type VARCHAR(24) NOT NULL DEFAULT 'APP', scope_path VARCHAR(255) NULL, visibility VARCHAR(24) NOT NULL DEFAULT 'ADMIN',
+                subject_type VARCHAR(64) NOT NULL, subject_id VARCHAR(191) NULL, actor_id VARCHAR(191) NULL,
                 status SMALLINT NULL DEFAULT 1, message TEXT NULL, changes JSONB NOT NULL DEFAULT '{}'::jsonb, metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
                 details BYTEA NULL, ip_address VARCHAR(64) NULL, user_agent TEXT NULL, occurred_at TIMESTAMP NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -120,7 +160,8 @@ final class PdoLogRepository implements LogRepositoryInterface
                 CREATE TABLE {$this->table} (
                     id BIGINT IDENTITY(1,1) PRIMARY KEY,
                     classification NVARCHAR(32) NOT NULL DEFAULT 'AUDIT', level SMALLINT NOT NULL DEFAULT 20, module NVARCHAR(64) NULL,
-                    action NVARCHAR(191) NOT NULL, subject_type NVARCHAR(64) NOT NULL, subject_id NVARCHAR(191) NULL, actor_id NVARCHAR(191) NULL,
+                    action NVARCHAR(191) NOT NULL, scope_type NVARCHAR(24) NOT NULL DEFAULT 'APP', scope_path NVARCHAR(255) NULL, visibility NVARCHAR(24) NOT NULL DEFAULT 'ADMIN',
+                    subject_type NVARCHAR(64) NOT NULL, subject_id NVARCHAR(191) NULL, actor_id NVARCHAR(191) NULL,
                     status SMALLINT NULL DEFAULT 1, message NVARCHAR(MAX) NULL, changes NVARCHAR(MAX) NOT NULL DEFAULT '{}', metadata NVARCHAR(MAX) NOT NULL DEFAULT '{}',
                     details VARBINARY(MAX) NULL, ip_address NVARCHAR(64) NULL, user_agent NVARCHAR(MAX) NULL, occurred_at DATETIME2 NULL,
                     created_at DATETIME2 NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -128,13 +169,15 @@ final class PdoLogRepository implements LogRepositoryInterface
             'mysql' => "CREATE TABLE IF NOT EXISTS {$this->table} (
                 id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
                 classification VARCHAR(32) NOT NULL DEFAULT 'AUDIT', level TINYINT UNSIGNED NOT NULL DEFAULT 20, module VARCHAR(64) NULL,
-                action VARCHAR(191) NOT NULL, subject_type VARCHAR(64) NOT NULL, subject_id VARCHAR(191) NULL, actor_id VARCHAR(191) NULL,
+                action VARCHAR(191) NOT NULL, scope_type VARCHAR(24) NOT NULL DEFAULT 'APP', scope_path VARCHAR(255) NULL, visibility VARCHAR(24) NOT NULL DEFAULT 'ADMIN',
+                subject_type VARCHAR(64) NOT NULL, subject_id VARCHAR(191) NULL, actor_id VARCHAR(191) NULL,
                 status TINYINT UNSIGNED NULL DEFAULT 1, message TEXT NULL, changes JSON NOT NULL, metadata JSON NOT NULL,
                 details MEDIUMBLOB NULL, ip_address VARCHAR(64) NULL, user_agent TEXT NULL, occurred_at DATETIME NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 KEY idx_prefab_logs_subject (subject_type, subject_id), KEY idx_prefab_logs_actor (actor_id),
                 KEY idx_prefab_logs_action (action), KEY idx_prefab_logs_class_level (classification, level),
-                KEY idx_prefab_logs_module (module), KEY idx_prefab_logs_created (created_at)
+                KEY idx_prefab_logs_module (module), KEY idx_prefab_logs_scope (scope_type, scope_path, visibility),
+                KEY idx_prefab_logs_created (created_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
             default => throw new RuntimeException("Unsupported log database driver '{$this->driver()}'."),
         };
@@ -148,23 +191,26 @@ final class PdoLogRepository implements LogRepositoryInterface
         $definitions = match ($this->driver()) {
             'sqlite' => [
                 'classification' => "TEXT NOT NULL DEFAULT 'AUDIT'", 'level' => 'INTEGER NOT NULL DEFAULT 20',
-                'module' => 'TEXT NULL', 'status' => 'INTEGER NULL DEFAULT 1', 'details' => 'BLOB NULL',
+                'module' => 'TEXT NULL', 'scope_type' => "TEXT NOT NULL DEFAULT 'APP'", 'scope_path' => 'TEXT NULL',
+                'visibility' => "TEXT NOT NULL DEFAULT 'ADMIN'", 'status' => 'INTEGER NULL DEFAULT 1', 'details' => 'BLOB NULL',
             ],
             'pgsql' => [
                 'classification' => "VARCHAR(32) NOT NULL DEFAULT 'AUDIT'", 'level' => 'SMALLINT NOT NULL DEFAULT 20',
-                'module' => 'VARCHAR(64) NULL', 'status' => 'SMALLINT NULL DEFAULT 1', 'details' => 'BYTEA NULL',
+                'module' => 'VARCHAR(64) NULL', 'scope_type' => "VARCHAR(24) NOT NULL DEFAULT 'APP'", 'scope_path' => 'VARCHAR(255) NULL',
+                'visibility' => "VARCHAR(24) NOT NULL DEFAULT 'ADMIN'", 'status' => 'SMALLINT NULL DEFAULT 1', 'details' => 'BYTEA NULL',
             ],
             'sqlsrv' => [
                 'classification' => "NVARCHAR(32) NOT NULL DEFAULT 'AUDIT'", 'level' => 'SMALLINT NOT NULL DEFAULT 20',
-                'module' => 'NVARCHAR(64) NULL', 'status' => 'SMALLINT NULL DEFAULT 1', 'details' => 'VARBINARY(MAX) NULL',
+                'module' => 'NVARCHAR(64) NULL', 'scope_type' => "NVARCHAR(24) NOT NULL DEFAULT 'APP'", 'scope_path' => 'NVARCHAR(255) NULL',
+                'visibility' => "NVARCHAR(24) NOT NULL DEFAULT 'ADMIN'", 'status' => 'SMALLINT NULL DEFAULT 1', 'details' => 'VARBINARY(MAX) NULL',
             ],
             'mysql' => [
                 'classification' => "VARCHAR(32) NOT NULL DEFAULT 'AUDIT'", 'level' => 'TINYINT UNSIGNED NOT NULL DEFAULT 20',
-                'module' => 'VARCHAR(64) NULL', 'status' => 'TINYINT UNSIGNED NULL DEFAULT 1', 'details' => 'MEDIUMBLOB NULL',
+                'module' => 'VARCHAR(64) NULL', 'scope_type' => "VARCHAR(24) NOT NULL DEFAULT 'APP'", 'scope_path' => 'VARCHAR(255) NULL',
+                'visibility' => "VARCHAR(24) NOT NULL DEFAULT 'ADMIN'", 'status' => 'TINYINT UNSIGNED NULL DEFAULT 1', 'details' => 'MEDIUMBLOB NULL',
             ],
             default => [],
         };
-
         foreach ($definitions as $name => $definition) {
             if (!in_array(strtolower($name), $columns, true)) {
                 $this->database->statement("ALTER TABLE {$this->table} ADD COLUMN {$name} {$definition}");
@@ -176,18 +222,11 @@ final class PdoLogRepository implements LogRepositoryInterface
     {
         $rows = match ($this->driver()) {
             'sqlite' => $this->database->select("PRAGMA table_info({$this->table})"),
-            'pgsql' => $this->database->select(
-                'SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = :table',
-                ['table' => $this->table],
-            ),
-            'sqlsrv' => $this->database->select(
-                'SELECT COLUMN_NAME AS column_name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :table',
-                ['table' => $this->table],
-            ),
+            'pgsql' => $this->database->select('SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = :table', ['table' => $this->table]),
+            'sqlsrv' => $this->database->select('SELECT COLUMN_NAME AS column_name FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = :table', ['table' => $this->table]),
             'mysql' => $this->database->select("SHOW COLUMNS FROM {$this->table}"),
             default => [],
         };
-
         return array_values(array_filter(array_map(static function (array $row): ?string {
             $name = $row['name'] ?? $row['column_name'] ?? $row['Field'] ?? $row['field'] ?? null;
             return $name !== null ? strtolower((string) $name) : null;
@@ -199,7 +238,8 @@ final class PdoLogRepository implements LogRepositoryInterface
         if (in_array($this->driver(), ['sqlite', 'pgsql'], true)) {
             foreach ([
                 'subject' => '(subject_type, subject_id)', 'actor' => '(actor_id)', 'action' => '(action)',
-                'class_level' => '(classification, level)', 'module' => '(module)', 'created' => '(created_at)',
+                'class_level' => '(classification, level)', 'module' => '(module)',
+                'scope' => '(scope_type, scope_path, visibility)', 'created' => '(created_at)',
             ] as $name => $columns) {
                 $this->database->statement("CREATE INDEX IF NOT EXISTS idx_{$this->table}_{$name} ON {$this->table}{$columns}");
             }
@@ -211,15 +251,16 @@ final class PdoLogRepository implements LogRepositoryInterface
         $details = LogPayloadCodec::decode($row['details'] ?? null);
         $changes = $this->decodeJson($row['changes'] ?? null);
         $metadata = $this->decodeJson($row['metadata'] ?? null);
-
         if ($changes === [] && is_array($details['changes'] ?? null)) { $changes = $details['changes']; }
         if ($metadata === [] && is_array($details['meta'] ?? null)) { $metadata = $details['meta']; }
         if (($row['message'] ?? null) === null && isset($details['message'])) { $row['message'] = (string) $details['message']; }
-
         $row['classification'] = strtoupper((string) ($row['classification'] ?? 'AUDIT'));
         $row['level'] = (int) ($row['level'] ?? LogEntry::INFO);
         $row['level_name'] = LogEntry::levelName($row['level']);
         $row['module'] = $row['module'] ?? null;
+        $row['scope_type'] = strtoupper((string) ($row['scope_type'] ?? LogEntry::SCOPE_APP));
+        $row['scope_path'] = $row['scope_path'] ?? null;
+        $row['visibility'] = strtoupper((string) ($row['visibility'] ?? LogEntry::VISIBILITY_ADMIN));
         $row['status'] = isset($row['status']) ? (int) $row['status'] : null;
         $row['changes'] = $changes;
         $row['metadata'] = $metadata;
@@ -234,10 +275,7 @@ final class PdoLogRepository implements LogRepositoryInterface
         return is_array($decoded) ? $decoded : [];
     }
 
-    private function driver(): string
-    {
-        return $this->database->driver();
-    }
+    private function driver(): string { return $this->database->driver(); }
 
     private function assertIdentifier(string $identifier): void
     {
