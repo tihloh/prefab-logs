@@ -2,6 +2,7 @@
 
 namespace Tihloh\Prefab\Logs\DTOs;
 
+use InvalidArgumentException;
 use Tihloh\Prefab\PrefabRuntime;
 use Tihloh\Prefab\Logs\Support\LogPayloadCodec;
 
@@ -13,6 +14,15 @@ final class LogEntry
     public const WARNING = 40;
     public const ERROR = 50;
     public const CRITICAL = 60;
+
+    public const SCOPE_APP = 'APP';
+    public const SCOPE_USER = 'USER';
+    public const SCOPE_ORGANIZATION = 'ORGANIZATION';
+
+    public const VISIBILITY_PUBLIC = 'PUBLIC';
+    public const VISIBILITY_USER = 'USER';
+    public const VISIBILITY_ORGANIZATION = 'ORGANIZATION';
+    public const VISIBILITY_ADMIN = 'ADMIN';
 
     public function __construct(
         public string $action,
@@ -30,12 +40,25 @@ final class LogEntry
         public ?string $module = null,
         public ?int $status = 1,
         public array $details = [],
+        public string $scopeType = self::SCOPE_APP,
+        public ?string $scopePath = null,
+        public string $visibility = self::VISIBILITY_ADMIN,
     ) {
         $this->classification = strtoupper(trim($classification ?: 'AUDIT'));
         $this->level = self::normalizeLevel($level);
+        $this->scopeType = self::normalizeScopeType($scopeType);
+        $this->scopePath = self::normalizeScopePath($scopePath);
+        $this->visibility = self::normalizeVisibility($visibility);
         $this->changes = self::normalizeChanges($changes);
         $this->metadata = LogPayloadCodec::sanitize($metadata);
         $this->details = LogPayloadCodec::sanitize($details);
+
+        if ($this->scopeType !== self::SCOPE_APP && $this->scopePath === null) {
+            throw new InvalidArgumentException('USER and ORGANIZATION log scopes require scope_path.');
+        }
+        if ($this->scopeType === self::SCOPE_APP) {
+            $this->scopePath = null;
+        }
 
         if ($this->details === []) {
             $this->details = array_filter([
@@ -50,6 +73,9 @@ final class LogEntry
             'level' => $this->level,
             'module' => $this->module,
             'action' => $action,
+            'scope_type' => $this->scopeType,
+            'scope_path' => $this->scopePath,
+            'visibility' => $this->visibility,
             'subject_type' => $subjectType,
             'subject_id' => $subjectId,
         ]);
@@ -63,12 +89,14 @@ final class LogEntry
     public static function fromArray(array $data): self
     {
         $action = (string) ($data['action'] ?? '');
-        $defaults = self::defaultsForAction($action);
+        $subjectType = (string) ($data['subject_type'] ?? $data['subjectType'] ?? $data['target_type'] ?? '');
+        $subjectId = $data['subject_id'] ?? $data['subjectId'] ?? $data['target_id'] ?? null;
+        $defaults = self::defaultsForAction($action, $subjectType, $subjectId);
 
         return new self(
             action: $action,
-            subjectType: (string) ($data['subject_type'] ?? $data['subjectType'] ?? $data['target_type'] ?? ''),
-            subjectId: $data['subject_id'] ?? $data['subjectId'] ?? $data['target_id'] ?? null,
+            subjectType: $subjectType,
+            subjectId: $subjectId,
             message: $data['message'] ?? null,
             actorId: $data['actor_id'] ?? $data['actorId'] ?? $data['user_id'] ?? null,
             changes: is_array($data['changes'] ?? null) ? $data['changes'] : [],
@@ -81,6 +109,9 @@ final class LogEntry
             module: isset($data['module']) ? (string) $data['module'] : $defaults['module'],
             status: self::statusValue($data['status'] ?? $defaults['status']),
             details: is_array($data['details'] ?? null) ? $data['details'] : [],
+            scopeType: (string) ($data['scope_type'] ?? $data['scopeType'] ?? $defaults['scope_type']),
+            scopePath: isset($data['scope_path']) ? (string) $data['scope_path'] : (isset($data['scopePath']) ? (string) $data['scopePath'] : $defaults['scope_path']),
+            visibility: (string) ($data['visibility'] ?? $defaults['visibility']),
         );
     }
 
@@ -136,7 +167,7 @@ final class LogEntry
         };
     }
 
-    private static function defaultsForAction(string $action): array
+    private static function defaultsForAction(string $action, string $subjectType = '', int|string|null $subjectId = null): array
     {
         $prefix = strtolower((string) strtok($action, '.'));
         $classification = match ($prefix) {
@@ -170,11 +201,16 @@ final class LogEntry
             default => $prefix !== '' ? $prefix : null,
         };
 
+        $userScoped = strtolower($subjectType) === 'user' && $subjectId !== null;
+
         return [
             'classification' => $classification,
             'level' => $level,
             'module' => $module,
             'status' => $status,
+            'scope_type' => $userScoped ? self::SCOPE_USER : self::SCOPE_APP,
+            'scope_path' => $userScoped ? (string) $subjectId : null,
+            'visibility' => $userScoped ? self::VISIBILITY_USER : self::VISIBILITY_ADMIN,
         ];
     }
 
@@ -182,6 +218,37 @@ final class LogEntry
     {
         $allowed = [self::DEBUG, self::INFO, self::NOTICE, self::WARNING, self::ERROR, self::CRITICAL];
         return in_array($level, $allowed, true) ? $level : self::INFO;
+    }
+
+    private static function normalizeScopeType(string $scopeType): string
+    {
+        $scopeType = strtoupper(trim($scopeType));
+        return match ($scopeType) {
+            self::SCOPE_USER, self::SCOPE_ORGANIZATION => $scopeType,
+            default => self::SCOPE_APP,
+        };
+    }
+
+    private static function normalizeScopePath(?string $scopePath): ?string
+    {
+        if ($scopePath === null) { return null; }
+        $scopePath = trim($scopePath, " .\t\n\r\0\x0B");
+        if ($scopePath === '') { return null; }
+        if (!preg_match('/^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$/', $scopePath)) {
+            throw new InvalidArgumentException('scope_path must be a stable dot-separated key path.');
+        }
+        return $scopePath;
+    }
+
+    private static function normalizeVisibility(string $visibility): string
+    {
+        $visibility = strtoupper(trim($visibility));
+        return match ($visibility) {
+            self::VISIBILITY_PUBLIC,
+            self::VISIBILITY_USER,
+            self::VISIBILITY_ORGANIZATION => $visibility,
+            default => self::VISIBILITY_ADMIN,
+        };
     }
 
     private static function statusValue(mixed $status): ?int
@@ -210,6 +277,9 @@ final class LogEntry
             'level_name' => self::levelName($this->level),
             'module' => $this->module,
             'action' => $this->action,
+            'scope_type' => $this->scopeType,
+            'scope_path' => $this->scopePath,
+            'visibility' => $this->visibility,
             'subject_type' => $this->subjectType,
             'subject_id' => $this->subjectId,
             'status' => $this->status,
