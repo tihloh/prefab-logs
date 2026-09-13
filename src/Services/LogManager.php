@@ -30,208 +30,94 @@ final class LogManager
     {
         if ($repository instanceof LogRepositoryInterface) {
             $this->repository = $repository;
-            PrefabRuntime::recordResolution(
-                'logs',
-                'repository',
-                'module-local',
-                ['provider' => $repository::class],
-            );
+            PrefabRuntime::recordResolution('logs', 'repository', 'module-local', ['provider' => $repository::class]);
         } elseif (is_array($repository)) {
             $this->config = $repository;
         }
-
         PrefabRuntime::register('logs', $this);
     }
 
-    /** Resolve storage once during module declaration/configuration passes. */
     public function prefabConfigure(): void
     {
         if (!$this->repository) {
-            $repository = PrefabConfig::resolve(
-                'logs',
-                'repository',
-                $this->config,
-            );
-
+            $repository = PrefabConfig::resolve('logs', 'repository', $this->config);
             if ($repository['value'] instanceof LogRepositoryInterface) {
                 $this->repository = $repository['value'];
-                PrefabRuntime::recordResolution(
-                    'logs',
-                    'repository',
-                    $repository['source'],
-                    ['provider' => $this->repository::class],
-                );
+                PrefabRuntime::recordResolution('logs', 'repository', $repository['source'], ['provider' => $this->repository::class]);
             }
         }
 
         if (!$this->repository) {
             [$database, $source, $details] = $this->resolveDatabase();
-
             if ($database) {
                 $this->database = $database;
-                $table = PrefabConfig::resolve(
-                    'logs',
-                    'table',
-                    $this->config,
-                    'prefab_logs',
-                );
-
-                $this->repository = new PdoLogRepository(
-                    $database,
-                    (string) $table['value'],
-                );
-
-                PrefabRuntime::recordResolution(
-                    'logs',
-                    'database',
-                    $source,
-                    $details,
-                );
-                PrefabRuntime::recordResolution(
-                    'logs',
-                    'table',
-                    $table['source'],
-                    ['table' => (string) $table['value']],
-                );
-                PrefabRuntime::recordResolution(
-                    'logs',
-                    'repository',
-                    'database-repository',
-                    ['provider' => PdoLogRepository::class],
-                );
+                $table = PrefabConfig::resolve('logs', 'table', $this->config, 'prefab_logs');
+                $this->repository = new PdoLogRepository($database, (string) $table['value']);
+                PrefabRuntime::recordResolution('logs', 'database', $source, $details);
+                PrefabRuntime::recordResolution('logs', 'table', $table['source'], ['table' => (string) $table['value']]);
+                PrefabRuntime::recordResolution('logs', 'repository', 'database-repository', ['provider' => PdoLogRepository::class]);
             }
         }
 
         if ($this->repository) {
-            PrefabRuntime::provide(
-                'logger',
-                $this,
-                'prefab-logs',
-            );
+            PrefabRuntime::provide('logger', $this, 'prefab-logs');
         }
     }
 
     /** @return array{0:?DatabaseInterface,1:string,2:array} */
     private function resolveDatabase(): array
     {
-        $localDatabase = $this->asDatabase(
-            $this->config['database'] ?? null,
-        );
-
+        $localDatabase = $this->asDatabase($this->config['database'] ?? null);
         if ($localDatabase) {
-            return [
-                $localDatabase,
-                'module-local',
-                ['driver' => $localDatabase->driver()],
-            ];
+            return [$localDatabase, 'module-local', ['driver' => $localDatabase->driver()]];
         }
-
-        if (
-            isset($this->config['connection'])
-            && is_string($this->config['connection'])
-        ) {
-            return $this->namedConnection(
-                $this->config['connection'],
-                'module-local',
-            );
+        if (isset($this->config['connection']) && is_string($this->config['connection'])) {
+            return $this->namedConnection($this->config['connection'], 'module-local');
         }
 
         $module = PrefabConfig::moduleOnly('logs');
-        $moduleDatabase = $this->asDatabase(
-            $module['database'] ?? null,
-        );
-
+        $moduleDatabase = $this->asDatabase($module['database'] ?? null);
         if ($moduleDatabase) {
-            return [
-                $moduleDatabase,
-                'prefab-config-module',
-                ['driver' => $moduleDatabase->driver()],
-            ];
+            return [$moduleDatabase, 'prefab-config-module', ['driver' => $moduleDatabase->driver()]];
         }
-
-        if (
-            isset($module['connection'])
-            && is_string($module['connection'])
-        ) {
-            return $this->namedConnection(
-                $module['connection'],
-                'prefab-config-module',
-            );
+        if (isset($module['connection']) && is_string($module['connection'])) {
+            return $this->namedConnection($module['connection'], 'prefab-config-module');
         }
 
         $common = $this->asDatabase(PrefabConfig::get('database'));
-
         if ($common) {
-            return [
-                $common,
-                'prefab-config-common',
-                ['driver' => $common->driver()],
-            ];
+            return [$common, 'prefab-config-common', ['driver' => $common->driver()]];
         }
 
         $entry = PrefabRuntime::resolveEntry('database');
-        $capability = $entry
-            ? $this->asDatabase($entry['value'])
-            : null;
-
+        $capability = $entry ? $this->asDatabase($entry['value']) : null;
         if ($entry && $capability) {
-            return [
-                $capability,
-                'prefab-capability',
-                [
-                    'provider' => $entry['provider'],
-                    ...($entry['meta'] ?? []),
-                ],
-            ];
+            return [$capability, 'prefab-capability', ['provider' => $entry['provider'], ...($entry['meta'] ?? [])]];
         }
-
         return [null, 'unresolved', []];
     }
 
     /** @return array{0:?DatabaseInterface,1:string,2:array} */
     private function namedConnection(string $name, string $source): array
     {
-        $entry = PrefabRuntime::resolveEntry(
-            'database.connection.' . $name,
-        );
-        $database = $entry
-            ? $this->asDatabase($entry['value'])
-            : null;
-
+        $entry = PrefabRuntime::resolveEntry('database.connection.' . $name);
+        $database = $entry ? $this->asDatabase($entry['value']) : null;
         if ($entry && $database) {
-            return [
-                $database,
-                $source,
-                [
-                    'provider' => $entry['provider'],
-                    'connection' => $name,
-                    'driver' => $database->driver(),
-                ],
-            ];
-        }
-
-        return [
-            null,
-            $source,
-            [
+            return [$database, $source, [
+                'provider' => $entry['provider'],
                 'connection' => $name,
-                'unresolved' => true,
-            ],
-        ];
+                'driver' => $database->driver(),
+            ]];
+        }
+        return [null, $source, ['connection' => $name, 'unresolved' => true]];
     }
 
     private function asDatabase(mixed $value): ?DatabaseInterface
     {
-        if ($value instanceof DatabaseInterface) {
-            return $value;
-        }
-
-        return $value instanceof PDO
-            ? new PdoDatabaseAdapter($value)
-            : null;
+        if ($value instanceof DatabaseInterface) { return $value; }
+        return $value instanceof PDO ? new PdoDatabaseAdapter($value) : null;
     }
 
-    /** Explain how Logs resolved storage and integrations. */
     public function explain(): array
     {
         return PrefabRuntime::explain('logs');
@@ -239,16 +125,10 @@ final class LogManager
 
     public function record(LogEntry|array $entry): int|string
     {
-        $entry = is_array($entry)
-            ? LogEntry::fromArray($entry)
-            : $entry;
-
+        $entry = is_array($entry) ? LogEntry::fromArray($entry) : $entry;
         if ($entry->action === '' || $entry->subjectType === '') {
-            throw new InvalidArgumentException(
-                'Log entry requires action and subject type.',
-            );
+            throw new InvalidArgumentException('Log entry requires action and subject type.');
         }
-
         return $this->repo()->record($entry);
     }
 
@@ -263,22 +143,46 @@ final class LogManager
         return $this->repo()->recent($limit, $offset);
     }
 
-    public function forSubject(
-        string $subjectType,
-        int|string $subjectId,
+    public function publicLogs(int $limit = 100, int $offset = 0): array
+    {
+        $repo = $this->scopedRepo();
+        return $repo->publicLogs($limit, $offset);
+    }
+
+    public function app(?string $visibility = null, int $limit = 100, int $offset = 0): array
+    {
+        return $this->scopedRepo()->forScope(LogEntry::SCOPE_APP, null, false, $visibility, $limit, $offset);
+    }
+
+    public function forUser(int|string $userId, ?string $visibility = null, int $limit = 100, int $offset = 0): array
+    {
+        return $this->scopedRepo()->forScope(LogEntry::SCOPE_USER, (string) $userId, false, $visibility, $limit, $offset);
+    }
+
+    public function forOrganization(
+        string $scopePath,
+        bool $includeDescendants = true,
+        ?string $visibility = null,
         int $limit = 100,
+        int $offset = 0,
     ): array {
-        return $this->repo()->forSubject(
-            $subjectType,
-            $subjectId,
+        return $this->scopedRepo()->forScope(
+            LogEntry::SCOPE_ORGANIZATION,
+            $scopePath,
+            $includeDescendants,
+            $visibility,
             $limit,
+            $offset,
         );
     }
 
-    public function forActor(
-        int|string $actorId,
-        int $limit = 100,
-    ): array {
+    public function forSubject(string $subjectType, int|string $subjectId, int $limit = 100): array
+    {
+        return $this->repo()->forSubject($subjectType, $subjectId, $limit);
+    }
+
+    public function forActor(int|string $actorId, int $limit = 100): array
+    {
         return $this->repo()->forActor($actorId, $limit);
     }
 
@@ -288,11 +192,7 @@ final class LogManager
         ?callable $actorResolver = null,
         ?callable $subjectResolver = null,
     ): array {
-        return (new HumanLogPresenter())->many(
-            $this->recent($limit, $offset),
-            $actorResolver,
-            $subjectResolver,
-        );
+        return (new HumanLogPresenter())->many($this->recent($limit, $offset), $actorResolver, $subjectResolver);
     }
 
     public function human(
@@ -300,25 +200,24 @@ final class LogManager
         ?callable $actorResolver = null,
         ?callable $subjectResolver = null,
     ): array {
-        return (new HumanLogPresenter())->present(
-            $log,
-            $actorResolver,
-            $subjectResolver,
-        );
+        return (new HumanLogPresenter())->present($log, $actorResolver, $subjectResolver);
     }
 
     private function repo(): LogRepositoryInterface
     {
+        if (!$this->repository) { $this->prefabConfigure(); }
         if (!$this->repository) {
-            $this->prefabConfigure();
+            throw new RuntimeException('Prefab Logs needs a repository or database capability/configuration.');
         }
-
-        if (!$this->repository) {
-            throw new RuntimeException(
-                'Prefab Logs needs a repository or database capability/configuration.',
-            );
-        }
-
         return $this->repository;
+    }
+
+    private function scopedRepo(): object
+    {
+        $repo = $this->repo();
+        if (!method_exists($repo, 'forScope') || !method_exists($repo, 'publicLogs')) {
+            throw new RuntimeException('The configured log repository does not support scoped log queries.');
+        }
+        return $repo;
     }
 }
