@@ -12,15 +12,25 @@ final class HumanLogPresenter
         $action = (string) ($log['action'] ?? '');
         $permission = $this->permissionName($log);
         $event = $this->summary($action, $actor, $subject, $permission, $log);
+        $changes = str_starts_with($action, 'permission.') ? [] : $this->changeDetails($log['changes'] ?? []);
 
         return [
             'id' => $log['id'] ?? null,
+            'classification' => strtoupper((string) ($log['classification'] ?? 'AUDIT')),
+            'level' => (int) ($log['level'] ?? 20),
+            'level_name' => strtoupper((string) ($log['level_name'] ?? 'INFO')),
+            'module' => $log['module'] ?? null,
+            'scope_type' => strtoupper((string) ($log['scope_type'] ?? 'APP')),
+            'scope_path' => $log['scope_path'] ?? null,
+            'visibility' => strtoupper((string) ($log['visibility'] ?? 'ADMIN')),
+            'status' => $log['status'] ?? null,
             'who' => $actor,
             'did' => $this->actionLabel($action),
             'what' => $subject,
             'event' => $event,
             'summary' => $event,
-            'details' => str_starts_with($action, 'permission.') ? [] : $this->changeDetails($log['changes'] ?? []),
+            'changes' => $changes,
+            'details' => $this->genericDetails($log['details'] ?? [], $changes),
             'created_at' => $log['created_at'] ?? $log['occurred_at'] ?? null,
             'occurred_at' => $log['occurred_at'] ?? null,
             'technical' => $log,
@@ -35,7 +45,6 @@ final class HumanLogPresenter
     private function summary(string $action, string $actor, string $subject, string $permission, array $log): string
     {
         if (!empty($log['message'])) { return rtrim((string) $log['message'], '.') . '.'; }
-
         return match ($action) {
             'permission.granted' => "$actor allowed $permission for $subject.",
             'permission.denied' => "$actor denied $permission for $subject.",
@@ -60,11 +69,7 @@ final class HumanLogPresenter
             str_contains($action, 'logout') => 'signed out',
             default => strtolower($this->actionLabel($action)),
         };
-
-        if (str_contains($action, 'login') || str_contains($action, 'logout')) {
-            return "$actor $verb.";
-        }
-
+        if (str_contains($action, 'login') || str_contains($action, 'logout')) { return "$actor $verb."; }
         return trim("$actor $verb $subject.");
     }
 
@@ -105,31 +110,32 @@ final class HumanLogPresenter
     private function changeDetails(array $changes): array
     {
         $details = [];
-        $sensitiveFields = ['password', 'password_hash', 'token', 'secret', 'access_token', 'refresh_token', 'api_key', 'authorization', 'cookie'];
-
         foreach ($changes as $field => $change) {
-            if (!is_array($change) || in_array(strtolower((string) $field), $sensitiveFields, true)) { continue; }
-
-            $before = array_key_exists('before', $change) ? $change['before'] : ($change['old'] ?? null);
-            $now = array_key_exists('now', $change) ? $change['now'] : ($change['new'] ?? null);
-            if ($this->same($before, $now)) { continue; }
-
+            if (!is_array($change)) { continue; }
+            $old = array_key_exists('old', $change) ? $change['old'] : ($change['before'] ?? null);
+            $new = array_key_exists('new', $change) ? $change['new'] : ($change['now'] ?? null);
+            if ($this->same($old, $new)) { continue; }
             $details[] = [
                 'field' => ucfirst($this->words((string) $field)),
-                'before' => $this->friendlyValue($before),
-                'now' => $this->friendlyValue($now),
+                'old' => $this->friendlyValue($old),
+                'new' => $this->friendlyValue($new),
             ];
         }
-
         return $details;
     }
 
-    private function same(mixed $before, mixed $now): bool
+    private function genericDetails(array $details, array $changes): array
     {
-        if (is_array($before) || is_array($now)) {
-            return json_encode($before) === json_encode($now);
-        }
-        return $before === $now;
+        unset($details['message'], $details['changes']);
+        if (isset($details['meta']) && $details['meta'] === []) { unset($details['meta']); }
+        if ($changes !== []) { $details['changes'] = $changes; }
+        return $details;
+    }
+
+    private function same(mixed $old, mixed $new): bool
+    {
+        if (is_array($old) || is_array($new)) { return json_encode($old) === json_encode($new); }
+        return $old === $new;
     }
 
     private function friendlyValue(mixed $value): string
