@@ -8,6 +8,7 @@ use Tihloh\Prefab\DatabaseInterface;
 use Tihloh\Prefab\PdoDatabaseAdapter;
 use Tihloh\Prefab\Logs\Contracts\LogRepositoryInterface;
 use Tihloh\Prefab\Logs\DTOs\LogEntry;
+use Tihloh\Prefab\Logs\Support\CompactId;
 
 /**
  * Database-backed audit-log repository.
@@ -34,14 +35,17 @@ final class PdoLogRepository implements LogRepositoryInterface
 
     public function record(LogEntry $entry): int|string
     {
+        $id = CompactId::make();
+
         $sql = "INSERT INTO {$this->table}
-            (action, subject_type, subject_id, actor_id, message, changes, metadata, ip_address, user_agent, occurred_at, created_at)
+            (id, action, subject_type, subject_id, actor_id, message, changes, metadata, ip_address, user_agent, occurred_at, created_at)
             VALUES
-            (:action, :subject_type, :subject_id, :actor_id, :message, :changes, :metadata, :ip_address, :user_agent, :occurred_at, CURRENT_TIMESTAMP)";
+            (:id, :action, :subject_type, :subject_id, :actor_id, :message, :changes, :metadata, :ip_address, :user_agent, :occurred_at, CURRENT_TIMESTAMP)";
 
         $this->database->statement(
             $sql,
             [
+                'id' => $id,
                 'action' => $entry->action,
                 'subject_type' => $entry->subjectType,
                 'subject_id' => $entry->subjectId !== null
@@ -65,7 +69,7 @@ final class PdoLogRepository implements LogRepositoryInterface
             ],
         );
 
-        return $this->database->lastInsertId();
+        return $id;
     }
 
     public function find(int|string $id): ?array
@@ -139,19 +143,19 @@ final class PdoLogRepository implements LogRepositoryInterface
 
         if ($this->driver() === 'sqlsrv') {
             return "SELECT * FROM {$this->table}{$whereSql}"
-                . " ORDER BY id DESC OFFSET {$offset} ROWS"
+                . " ORDER BY created_at DESC, id DESC OFFSET {$offset} ROWS"
                 . " FETCH NEXT {$limit} ROWS ONLY";
         }
 
         return "SELECT * FROM {$this->table}{$whereSql}"
-            . " ORDER BY id DESC LIMIT {$limit} OFFSET {$offset}";
+            . " ORDER BY created_at DESC, id DESC LIMIT {$limit} OFFSET {$offset}";
     }
 
     private function ensureSchema(): void
     {
         $sql = match ($this->driver()) {
             'sqlite' => "CREATE TABLE IF NOT EXISTS {$this->table} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id VARCHAR(16) PRIMARY KEY,
                 action TEXT NOT NULL,
                 subject_type TEXT NOT NULL,
                 subject_id TEXT NULL,
@@ -166,7 +170,7 @@ final class PdoLogRepository implements LogRepositoryInterface
             )",
 
             'pgsql' => "CREATE TABLE IF NOT EXISTS {$this->table} (
-                id BIGSERIAL PRIMARY KEY,
+                id VARCHAR(16) PRIMARY KEY,
                 action VARCHAR(191) NOT NULL,
                 subject_type VARCHAR(64) NOT NULL,
                 subject_id VARCHAR(191) NULL,
@@ -182,7 +186,7 @@ final class PdoLogRepository implements LogRepositoryInterface
 
             'sqlsrv' => "IF OBJECT_ID(N'{$this->table}', N'U') IS NULL
                 CREATE TABLE {$this->table} (
-                    id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                    id NVARCHAR(16) PRIMARY KEY,
                     action NVARCHAR(191) NOT NULL,
                     subject_type NVARCHAR(64) NOT NULL,
                     subject_id NVARCHAR(191) NULL,
@@ -197,7 +201,7 @@ final class PdoLogRepository implements LogRepositoryInterface
                 )",
 
             'mysql' => "CREATE TABLE IF NOT EXISTS {$this->table} (
-                id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                id VARCHAR(16) NOT NULL PRIMARY KEY,
                 action VARCHAR(191) NOT NULL,
                 subject_type VARCHAR(64) NOT NULL,
                 subject_id VARCHAR(191) NULL,
