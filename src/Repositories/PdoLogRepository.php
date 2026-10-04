@@ -2,6 +2,8 @@
 
 namespace Tihloh\Prefab\Logs\Repositories;
 
+use DateTimeImmutable;
+use DateTimeZone;
 use PDO;
 use RuntimeException;
 use Tihloh\Prefab\DatabaseInterface;
@@ -65,7 +67,7 @@ final class PdoLogRepository implements LogRepositoryInterface
                 ),
                 'ip_address' => $entry->ipAddress,
                 'user_agent' => $entry->userAgent,
-                'occurred_at' => $entry->occurredAt,
+                'occurred_at' => $this->databaseTimestamp($entry->occurredAt),
             ],
         );
 
@@ -211,8 +213,8 @@ final class PdoLogRepository implements LogRepositoryInterface
                 metadata JSON NOT NULL,
                 ip_address VARCHAR(64) NULL,
                 user_agent TEXT NULL,
-                occurred_at DATETIME NULL,
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                occurred_at DATETIME(6) NULL,
+                created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
                 KEY idx_prefab_logs_subject (subject_type, subject_id),
                 KEY idx_prefab_logs_actor (actor_id),
                 KEY idx_prefab_logs_action (action),
@@ -225,7 +227,44 @@ final class PdoLogRepository implements LogRepositoryInterface
         };
 
         $this->database->statement($sql);
+        $this->ensureTemporalPrecision();
         $this->ensureIndexes();
+    }
+
+    private function ensureTemporalPrecision(): void
+    {
+        if ($this->driver() !== 'mysql') {
+            return;
+        }
+
+        $this->database->statement(
+            "ALTER TABLE {$this->table}"
+            . " MODIFY occurred_at DATETIME(6) NULL,"
+            . " MODIFY created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)",
+        );
+    }
+
+    private function databaseTimestamp(?string $value): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        if ($this->driver() === 'sqlite') {
+            return $value;
+        }
+
+        try {
+            return (new DateTimeImmutable($value))
+                ->setTimezone(new DateTimeZone('UTC'))
+                ->format('Y-m-d H:i:s.u');
+        } catch (\Throwable $e) {
+            throw new RuntimeException(
+                'Invalid log occurred_at timestamp: ' . $value,
+                0,
+                $e,
+            );
+        }
     }
 
     private function ensureIndexes(): void
