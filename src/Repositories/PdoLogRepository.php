@@ -227,21 +227,7 @@ final class PdoLogRepository implements LogRepositoryInterface
         };
 
         $this->database->statement($sql);
-        $this->ensureTemporalPrecision();
         $this->ensureIndexes();
-    }
-
-    private function ensureTemporalPrecision(): void
-    {
-        if ($this->driver() !== 'mysql') {
-            return;
-        }
-
-        $this->database->statement(
-            "ALTER TABLE {$this->table}"
-            . " MODIFY occurred_at DATETIME(6) NULL,"
-            . " MODIFY created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)",
-        );
     }
 
     private function databaseTimestamp(?string $value): ?string
