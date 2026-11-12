@@ -14,6 +14,7 @@ use Tihloh\Prefab\PrefabRuntime;
 use Tihloh\Prefab\Logs\Contracts\LogRepositoryInterface;
 use Tihloh\Prefab\Logs\DTOs\LogEntry;
 use Tihloh\Prefab\Logs\Presenters\HumanLogPresenter;
+use Tihloh\Prefab\Logs\Presenters\AuditTrailPresenter;
 use Tihloh\Prefab\Logs\Repositories\PdoLogRepository;
 
 /**
@@ -394,6 +395,37 @@ final class LogManager
             $actorResolver,
             $subjectResolver,
         );
+    }
+
+    /**
+     * Present an audit record without leaking technical metadata to viewers
+     * unless the host application explicitly authorizes that level of access.
+     * The host owns authentication and record-specific permission checks.
+     */
+    public function audit(
+        array $entry,
+        bool $mayViewTechnicalDetails = false,
+        ?callable $referenceResolver = null,
+        ?callable $labelResolver = null,
+        ?callable $valueResolver = null,
+        ?callable $summaryResolver = null,
+    ): array {
+        return (new AuditTrailPresenter(
+            $referenceResolver, $labelResolver, $valueResolver, $summaryResolver
+        ))->present($entry, $mayViewTechnicalDetails);
+    }
+
+    public function auditMany(
+        array $entries,
+        bool $mayViewTechnicalDetails = false,
+        ?callable $referenceResolver = null,
+        ?callable $labelResolver = null,
+        ?callable $valueResolver = null,
+        ?callable $summaryResolver = null,
+    ): array {
+        return (new AuditTrailPresenter(
+            $referenceResolver, $labelResolver, $valueResolver, $summaryResolver
+        ))->many($entries, $mayViewTechnicalDetails);
     }
 
     private function repo(): LogRepositoryInterface
