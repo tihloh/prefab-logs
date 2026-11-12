@@ -121,6 +121,68 @@ $logs->record([
 
 When `message` is supplied, the human presenter uses it as the event sentence while the structured action, subject and actor remain available for technical use.
 
+## Human-friendly audit history with restricted technical details
+
+In addition to simple activity sentences, Prefab Logs provides a reusable
+`AuditTrailPresenter` for document/ledger histories, including readable
+action descriptions, before/after field changes and metadata. Every application
+can use the same presenter without copying a view-specific formatter.
+
+```php
+use Tihloh\Prefab\Logs\Presenters\AuditTrailPresenter;
+
+$presenter = new AuditTrailPresenter(
+    referenceResolver: fn(string $kind, string $id): ?string =>
+        $application->lookupReference($kind, $id),
+    labelResolver: fn(string $field): string => $application->fieldLabel($field),
+    valueResolver: fn(string $field, mixed $value): string =>
+        $application->formatField($field, $value),
+    // Optional application-specific event descriptions take precedence.
+    summaryResolver: fn(array $event): ?string => null,
+);
+
+// Decide permission in your own Auth/Permissions module. Prefab Logs does not
+// grant any permission or expose database details to unauthorized callers.
+$maySeeRaw = $auth->isSuperAdmin()
+    || $permissions->can('logs.view_details');
+
+$view = $presenter->present($event, $maySeeRaw);
+echo htmlspecialchars($view['summary'], ENT_QUOTES, 'UTF-8');
+
+// These keys exist ONLY if technical-detail access is authorized:
+if ($maySeeRaw) {
+    $changes = $view['changes'];
+    $metadata = $view['metadata'];
+    $originalMessage = $view['original_message'];
+}
+```
+
+Equivalent convenience APIs are available from `LogManager`:
+
+```php
+$view = $logs->audit($event, $maySeeRaw, $referenceResolver,
+                     $labelResolver, $valueResolver, $summaryResolver);
+$views = $logs->auditMany($events, $maySeeRaw, $referenceResolver,
+                          $labelResolver, $valueResolver, $summaryResolver);
+```
+
+The `present()` return contains `title`, `summary`, `actor`, `time`,
+`source` and `has_technical_details`. It **omits** `changes`, `metadata`
+and `original_message` entirely unless the caller passes `true`.
+This prevents accidental raw-detail rendering in ordinary users' views.
+
+Application-specific object/program names belong in the supplied reference
+resolver, not in Prefab Logs' database layer. Applications must check both
+document access and technical-detail permission **before** calling the presenter
+and must HTML-escape the displayed text. Logged source evidence is never
+modified by presentation.
+
+Run the smoke checks:
+
+```bash
+php tests/audit_trail_presenter_smoke.php
+```
+
 ## Update tracking
 
 Use `LogEntry::changes()` whenever an operation has before and current values:
