@@ -22,10 +22,10 @@ final class AuditTrailPresenter
      * @param callable|null $summaryResolver fn(array $entry): ?string
      */
     public function __construct(
-        private $referenceResolver = null,
-        private $labelResolver = null,
-        private $valueResolver = null,
-        private $summaryResolver = null,
+        private mixed $referenceResolver = null,
+        private mixed $labelResolver = null,
+        private mixed $valueResolver = null,
+        private mixed $summaryResolver = null,
     ) {}
 
     public function present(array $entry, bool $mayViewTechnicalDetails = false): array
